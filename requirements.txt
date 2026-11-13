@@ -1,0 +1,12 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+markdownify
+pandas
+pyarrow
+PySide6
+python-dotenv
+requests
+tqdm
+PySocks
