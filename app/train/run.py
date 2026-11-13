@@ -22,7 +22,7 @@ class Train:
         ids = sorted(self.vocab.values())
         assert ids[0] == 0 and ids[-1] == len(ids) - 1, "vocab ID가 0..N-1 연속이어야 함"
         self.id_to_tag = {v: k for k, v in self.vocab.items()}
-        
+
         self.PAD_ID = self.vocab["<pad>"]
         self.CLS_ID = self.vocab["<cls>"]
         self.EOS_ID = self.vocab["<eos>"]
@@ -263,27 +263,49 @@ class Train:
 
                 self.steps += 1
 
+                MONITOR["status"]["training"] = True
+
+                # train의 10스텝마다
                 if self.steps % 10 == 0:
                     with torch.no_grad():
-                        sample_mask = attn_mask[:1, 0].detach().cpu() 
-                        visible = sample_mask.sum(dim=-1)
-                        sample_pad = key_padding[:1].detach().cpu() 
+                        # 샘플 태그 문자열 변환
+                        sample_tags = [
+                            [self.id_to_tag.get(int(t), f"<{int(t)}>") for t in row if int(t) != self.PAD_ID]
+                            for row in batch[:2].detach().cpu()
+                        ]
+
+                        # mask 축소 (255x255 → 32x32 미리보기)
+                        mask_preview = attn_mask[:1, 0].detach().cpu()
+                        # 균등 샘플링으로 축소
+                        idx = torch.linspace(0, mask_preview.shape[0] - 1, 32).long()
+                        mask_preview = mask_preview[idx][:, idx].int().tolist()
+
+                        visible = attn_mask[:1, 0].sum(-1).detach().cpu().tolist()
+                        key_pad = key_padding[:1].detach().cpu().int().tolist()
 
                     MONITOR["stats"] = {
+                        "steps": self.steps,
                         "loss": loss.item(),
                         "gnorm": gnorm.item(),
-                        "steps": self.steps,
-                        "tags_id": batch[:2].detach().cpu(),
-                        "mask": sample_mask,
+                        "lr": self.optimizer.param_groups[0]["lr"],
+                        "sample_tags": sample_tags,
                         "mask_visible": visible,
-                        "key_padding": sample_pad,
+                        "key_padding": key_pad,
+                        "mask_preview": mask_preview,
                     }
 
+                # 1000스텝마다
                 if self.steps % 1000 == 0:
                     self.model_save()
-                    generates =self.inference()
+                    generates = self.inference()
+                    MONITOR["infer"] = {
+                        "tags": [self.id_to_tag.get(i, f"<{i}>") for i in generates],
+                        "ids": generates,
+                        "updated_step": self.steps,
+                    }
 
-                    MONITOR["infer"] = [self.id_to_tag.get(i, f"<{i}>") for i in generates]
+                # train 종료 (finally)
+                MONITOR["status"]["training"] = False
 
         except Exception:
             import traceback
