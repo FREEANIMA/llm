@@ -15,6 +15,7 @@ class Config(GlobalConfig):
     nhaed:int = 16
     num_layers:int = 16
     rope_hz:int = 10_000
+    max_len:int = 256
 
     weight_decay = 0.01
     drop_out = 0.1

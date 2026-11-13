@@ -33,7 +33,7 @@ class Block(nn.Module):
         b, h, n, d = x.shape
         return x.transpose(1, 2).reshape(b, n, h * d)
 
-    def self_attention(self, x, past_kv=None, offset=0, use_cache=False):
+    def self_attention(self, x, attn_mask, past_kv=None, offset=0, use_cache=False):
         q, k, v = self.qkv(x).chunk(3, -1)
         q, k = self.q_norm(q), self.k_norm(k)
         Q, K, V = map(self._split_heads, (q, k, v))
@@ -46,13 +46,14 @@ class Block(nn.Module):
 
         out = F.scaled_dot_product_attention(
             Q, K, V,
-            is_causal=past_kv is None,
+            is_causal=False,
+            attn_mask=attn_mask,
             dropout_p=self.p if self.training else 0.0,
         )
         return self.self_out_proj(self._merge_heads(out)), new_kv
 
-    def forward(self, x, past_kv=None, offset=0, use_cache=False):
-        a, new_kv = self.self_attention(self.emb_norm(x), past_kv, offset, use_cache)
+    def forward(self, x, attn_mask, past_kv=None, offset=0, use_cache=False):
+        a, new_kv = self.self_attention(self.emb_norm(x), attn_mask, past_kv, offset, use_cache)
         x = x + a
         x = x + self.ffn_out(F.gelu(self.ffn_in(self.ffn_norm(x))))
         return x, new_kv
