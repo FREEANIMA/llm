@@ -6,9 +6,10 @@ app/weights/
 *.ckpt
 *.safetensors
 
+myenv310
 *.log
 logs/
-
+app/__pycache__/
 __pycache__/
 *.py[cod]
 *.egg-info/
