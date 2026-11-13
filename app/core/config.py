@@ -6,6 +6,7 @@ class GlobalConfig:
     lr: float = 1e-4
     batch_size: int = 32
     dtype: torch.dtype = torch.bfloat16
+    use_amp:bool = True
     device: str = "cuda"
 
 @dataclass

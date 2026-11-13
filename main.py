@@ -1,10 +1,24 @@
+import os
 import threading
 import time
-from IPython.display import display, clear_output, HTML
+
 from app.train.run import Train
 from app.core.globals import MONITOR
 
-base_root = "/content/drive/MyDrive/model/llm/app"
+try:
+    import google.colab  # noqa
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
+
+def get_base_root():
+    if IN_COLAB:
+        return "/content/drive/MyDrive/model/llm/app"
+    here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+    return os.path.join(here, "app")
+
+base_root = get_base_root()
+print("base_root:", base_root)
 
 trainer = Train(base_root=base_root)
 
@@ -14,39 +28,47 @@ t_loader.start()
 t_train.start()
 
 # ---- 대시보드 ----
-dashboard = display(HTML(""), display_id=True)
+if IN_COLAB:
+    from IPython.display import display, HTML
+    dashboard = display(HTML(""), display_id=True)
 
-def render():
-    s = MONITOR.get("stats") or {}
-    infer = MONITOR.get("infer") or []
+    def render():
+        s = MONITOR.get("stats") or {}
+        infer = MONITOR.get("infer") or []
+        def fmt(v, f=".4f"):
+            return format(v, f) if v is not None else "—"
+        sample = s.get("sample_tags") or []
+        html = f"""
+        <div style="font-family: monospace; font-size: 14px; line-height: 1.6;">
+          <b>steps</b> : {s.get('steps', 0)}<br>
+          <b>loss</b>  : {fmt(s.get('loss'))}<br>
+          <b>gnorm</b> : {fmt(s.get('gnorm'), '.3f')}<br>
+          <b>lr</b>    : {s.get('lr', '—')}<br>
+          <b>sample</b>: {', '.join(sample[0][:10]) if sample else '—'}<br>
+          <b>infer</b> : {', '.join(infer[:15]) if infer else '—'}
+        </div>
+        """
+        dashboard.update(HTML(html))
 
-    loss  = s.get("loss")
-    gnorm = s.get("gnorm")
-    steps = s.get("steps", 0)
-    lr    = s.get("lr")
-
-    def fmt(v, f=".4f"):
-        return format(v, f) if v is not None else "—"
-
-    sample = s.get("sample_tags") or []
-    sample_str = ", ".join(sample[0][:10]) if sample else "—"
-    infer_str = ", ".join(infer[:15]) if infer else "—"
-
-    html = f"""
-    <div style="font-family: monospace; font-size: 14px; line-height: 1.6;">
-      <b>steps</b> : {steps}<br>
-      <b>loss</b>  : {fmt(loss)}<br>
-      <b>gnorm</b> : {fmt(gnorm, '.3f')}<br>
-      <b>lr</b>    : {lr if lr is not None else '—'}<br>
-      <b>sample</b>: {sample_str}<br>
-      <b>infer</b> : {infer_str}
-    </div>
-    """
-    dashboard.update(HTML(html))
-
-while t_train.is_alive():
+    while t_train.is_alive():
+        render()
+        time.sleep(2)
     render()
-    time.sleep(2)
 
-render()   # 마지막 상태
-print("training stopped")
+else:
+    # 로컬: 터미널에 주기 출력
+    last = -1
+    while t_train.is_alive():
+        s = MONITOR.get("stats") or {}
+        steps = s.get("steps", 0)
+        if steps != last:
+            loss = s.get("loss")
+            gnorm = s.get("gnorm")
+            lr = s.get("lr")
+            loss_s = f"{loss:.4f}" if loss is not None else "—"
+            gnorm_s = f"{gnorm:.3f}" if gnorm is not None else "—"
+            lr_s = f"{lr:.1e}" if lr is not None else "—"
+            print(f"[step {steps}] loss={loss_s} gnorm={gnorm_s} lr={lr_s}", end="\r", flush=True)
+            last = steps
+        time.sleep(1)
+    print("\ntraining stopped")
