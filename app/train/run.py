@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import pandas as pd
 
 from dataclasses import asdict
-from ..core.globals import config
+from ..core.globals import config, MONITOR
 from ..model.model import Model
 
 class Train:
@@ -21,12 +21,13 @@ class Train:
 
         ids = sorted(self.vocab.values())
         assert ids[0] == 0 and ids[-1] == len(ids) - 1, "vocab ID가 0..N-1 연속이어야 함"
-
+        self.id_to_tag = {v: k for k, v in self.vocab.items()}
+        
         self.PAD_ID = self.vocab["<pad>"]
         self.CLS_ID = self.vocab["<cls>"]
         self.EOS_ID = self.vocab["<eos>"]
         self.UNK_ID = self.vocab["<unk>"]
-
+        
         params = asdict(config)
         params["vocab_size"] = len(self.vocab)
         self.params = params
@@ -40,8 +41,12 @@ class Train:
             fused=torch.cuda.is_available(),
         )
 
+        self.model_path = os.path.join(self.base_root, "weights", "model.pt")
+        self.steps = self.model_load(self.model_path)
+
         self.stop_event = threading.Event()
         self.BATCH_Q = queue.Queue(maxsize=64)
+
         self.tags = self.mapping()
 
     def mapping(self):
@@ -133,6 +138,89 @@ class Train:
                 batch = torch.tensor(chunk, dtype=torch.long)
                 self.BATCH_Q.put(batch)
 
+    def model_save(self):
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+        checkpoint = {
+            "steps": self.steps,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "config": asdict(config),
+        }
+        torch.save(checkpoint, self.model_path)
+
+    def model_load(self, path):
+        if not os.path.exists(path):
+            print(f"[model_load] {path} 없음 → 새로 시작")
+            return 0
+
+        checkpoint = torch.load(path, map_location=config.device, weights_only=True)
+
+        self.model.load_state_dict(checkpoint["model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+
+        saved_cfg = checkpoint.get("config")
+        cur_cfg = asdict(config)
+        if saved_cfg and saved_cfg != cur_cfg:
+            print(f"[model_load] ⚠ config 불일치")
+            print(f"  saved: {saved_cfg}")
+            print(f"  cur  : {cur_cfg}")
+
+        steps = checkpoint["steps"]
+        print(f"[model_load] steps={steps} 로드 완료")
+        return steps
+
+    @torch.no_grad()
+    def inference(self, max_new_tokens=256, temperature=1.0, top_k=None, use_amp=None):
+        self.model.eval()
+        device = config.device
+        use_amp = config.use_amp if use_amp is None else use_amp
+
+        # 시작 토큰: <cls>
+        input_ids = torch.tensor([[self.CLS_ID]], dtype=torch.long, device=device)
+
+        past_kv = None
+        generated = []
+
+        for _ in range(max_new_tokens):
+            L_q = input_ids.shape[1]
+            offset = 0 if past_kv is None else past_kv[0][0].shape[2]
+            L_k = L_q + offset
+            attn_mask = torch.ones(L_q, L_k, dtype=torch.bool, device=device).tril(diagonal=offset)
+            attn_mask = attn_mask[None, None]   # (1,1,L_q,L_k)
+
+            with torch.amp.autocast(device_type="cuda", dtype=config.dtype, enabled=use_amp):
+                logits, past_kv = self.model.forward(
+                    x=input_ids,
+                    attn_mask=attn_mask,
+                    past_kv=past_kv,
+                    use_cache=True,
+                )
+            next_logits = logits[:, -1, :].float()
+
+            if temperature and temperature > 0:
+                next_logits = next_logits / temperature
+            if top_k is not None:
+                k = min(top_k, next_logits.size(-1))
+                topk_vals, _ = torch.topk(next_logits, k)
+                threshold = topk_vals[:, -1].unsqueeze(-1)
+                next_logits = torch.where(
+                    next_logits < threshold,
+                    torch.full_like(next_logits, float("-inf")),
+                    next_logits,
+                )
+
+            probs = F.softmax(next_logits, dim=-1)
+            next_id = torch.multinomial(probs, num_samples=1)
+
+            if next_id.item() == self.EOS_ID:
+                break
+
+            generated.append(next_id.item())
+            input_ids = next_id
+
+        self.model.train()
+        return generated
+
     def train(self):
         self.model.train()
 
@@ -170,21 +258,35 @@ class Train:
                     )
 
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                gnorm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
-                
+
+                self.steps += 1
+
+                if self.steps % 10 == 0:
+                    with torch.no_grad():
+                        sample_mask = attn_mask[:1, 0].detach().cpu() 
+                        visible = sample_mask.sum(dim=-1)
+                        sample_pad = key_padding[:1].detach().cpu() 
+
+                    MONITOR["stats"] = {
+                        "loss": loss.item(),
+                        "gnorm": gnorm.item(),
+                        "steps": self.steps,
+                        "tags_id": batch[:2].detach().cpu(),
+                        "mask": sample_mask,
+                        "mask_visible": visible,
+                        "key_padding": sample_pad,
+                    }
+
+                if self.steps % 1000 == 0:
+                    self.model_save()
+                    generates =self.inference()
+
+                    MONITOR["infer"] = [self.id_to_tag.get(i, f"<{i}>") for i in generates]
+
         except Exception:
             import traceback
             traceback.print_exc()
             self.stop_event.set()
             raise
-
-    def run(self):
-        t_loader = threading.Thread(target=self.batch_loader, daemon=True)
-        t_train = threading.Thread(target=self.train, daemon=True)
-        t_loader.start()
-        t_train.start()
-        return t_loader, t_train
-
-    def stop(self):
-        self.stop_event.set()

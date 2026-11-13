@@ -3,21 +3,18 @@ from dataclasses import dataclass
 
 @dataclass
 class GlobalConfig:
-    lr = 1e-4
-    batch_size = 32
-
-    dtype = torch.bfloat16
-    device = "cuda"
+    lr: float = 1e-4
+    batch_size: int = 32
+    dtype: torch.dtype = torch.bfloat16
+    device: str = "cuda"
 
 @dataclass
 class Config(GlobalConfig):
-    hidden_size:int = 1024
-    nhaed:int = 16
-    num_layers:int = 16
-    rope_hz:int = 10_000
-    max_len:int = 256
+    hidden_size: int = 1024
+    nhead: int = 16
+    num_layers: int = 16
+    rope_hz: int = 10_000
+    max_len: int = 256
 
-    weight_decay = 0.01
-    drop_out = 0.1
-
-    
+    weight_decay: float = 0.01
+    drop_out: float = 0.1
