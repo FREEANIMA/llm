@@ -1,5 +1,6 @@
 from .config import Config
 config = Config()
 MONITOR = {
-    "stats" : None
+    "stats" : None,
+    "infer" : None
 }
