@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import html as html_lib  # 변수명 html과 충돌 방지를 위해 별칭 사용
 
 from app.train.run import Train
 from app.core.globals import MONITOR
@@ -32,6 +33,10 @@ if IN_COLAB:
     from IPython.display import display, HTML
     dashboard = display(HTML(""), display_id=True)
 
+    def esc(tags):
+        # 태그 리스트를 이스케이프해서 ", "로 합침
+        return html_lib.escape(", ".join(str(t) for t in tags))
+
     def render():
         s = MONITOR.get("stats") or {}
         infer = MONITOR.get("infer") or {}
@@ -49,17 +54,20 @@ if IN_COLAB:
             infer_tags = list(infer)
             infer_step = "—"
 
-        html = f"""
+        sample_str = esc(sample[0][:10]) if sample else "—"
+        infer_str = esc(infer_tags[:15]) if infer_tags else "—"
+
+        html_str = f"""
         <div style="font-family: monospace; font-size: 14px; line-height: 1.6;">
           <b>steps</b> : {s.get('steps', 0)}<br>
           <b>loss</b>  : {fmt(s.get('loss'))}<br>
           <b>gnorm</b> : {fmt(s.get('gnorm'), '.3f')}<br>
           <b>lr</b>    : {s.get('lr', '—')}<br>
-          <b>sample</b>: {', '.join(sample[0][:10]) if sample else '—'}<br>
-          <b>infer</b> (step {infer_step}): {', '.join(infer_tags[:15]) if infer_tags else '—'}
+          <b>sample</b>: {sample_str}<br>
+          <b>infer</b> (step {infer_step}): {infer_str}
         </div>
         """
-        dashboard.update(HTML(html))
+        dashboard.update(HTML(html_str))
 
     while t_train.is_alive():
         render()

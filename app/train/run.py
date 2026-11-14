@@ -81,6 +81,13 @@ class Train:
             .tolist()
         )
 
+        # nsfw 여부에 따라 태그 추가 (nsfw=True -> "nsfw", False -> "general")
+        nsfw_flags = metadata["nsfw"].fillna(False).astype(bool).tolist()
+        for tags, is_nsfw in zip(self.tags, nsfw_flags):
+            extra = "nsfw" if is_nsfw else "general"
+            if extra not in tags:
+                tags.append(extra)
+
         MAX_LEN = 256
         unknown = set()
 
