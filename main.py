@@ -34,10 +34,21 @@ if IN_COLAB:
 
     def render():
         s = MONITOR.get("stats") or {}
-        infer = MONITOR.get("infer") or []
+        infer = MONITOR.get("infer") or {}
+
         def fmt(v, f=".4f"):
             return format(v, f) if v is not None else "—"
+
         sample = s.get("sample_tags") or []
+
+        # infer 는 {"tags": [...], "ids": [...], "updated_step": N} dict
+        if isinstance(infer, dict):
+            infer_tags = infer.get("tags") or []
+            infer_step = infer.get("updated_step", "—")
+        else:
+            infer_tags = list(infer)
+            infer_step = "—"
+
         html = f"""
         <div style="font-family: monospace; font-size: 14px; line-height: 1.6;">
           <b>steps</b> : {s.get('steps', 0)}<br>
@@ -45,7 +56,7 @@ if IN_COLAB:
           <b>gnorm</b> : {fmt(s.get('gnorm'), '.3f')}<br>
           <b>lr</b>    : {s.get('lr', '—')}<br>
           <b>sample</b>: {', '.join(sample[0][:10]) if sample else '—'}<br>
-          <b>infer</b> : {', '.join(infer[:15]) if infer else '—'}
+          <b>infer</b> (step {infer_step}): {', '.join(infer_tags[:15]) if infer_tags else '—'}
         </div>
         """
         dashboard.update(HTML(html))
