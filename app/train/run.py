@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 import pandas as pd
 
+from huggingface_hub import  HfApi, CommitOperationCopy
 from dataclasses import asdict
 from ..core.globals import config, MONITOR
 from ..model.model import Model
@@ -41,7 +42,7 @@ class Train:
             fused=torch.cuda.is_available(),
         )
 
-        self.model_path = os.path.join(self.base_root, "weights", "model.pt")
+        self.model_path = os.path.join(self.base_root, "weights", "tags_llm.pt")
         self.steps = self.model_load(self.model_path)
 
         self.stop_event = threading.Event()
@@ -154,6 +155,20 @@ class Train:
             "config": asdict(config),
         }
         torch.save(checkpoint, self.model_path)
+
+    def huggingface_upload(self):
+        CKPT_LOCAL_PATH = os.path.join(self.base_root, "weigths", "tags_llm.pt")
+        try:
+            api = HfApi()
+            api.upload_file(
+                path_or_fileobj=CKPT_LOCAL_PATH,
+                path_in_repo="tags_llm.pt",
+                repo_id="honghong3/VER9",
+                repo_type="model",
+                commit_message=f"step {self.steps}",
+            )
+        except Exception as e:
+            print(f"[save_checkpoint] HF 업로드 실패: {type(e).__name__}: {e}")
 
     def model_load(self, path):
         if not os.path.exists(path):
@@ -301,9 +316,9 @@ class Train:
                         "mask_preview": mask_preview,
                     }
 
-                # 1000스텝마다
                 if self.steps % 1000 == 0:
                     self.model_save()
+                    self.huggingface_upload()
                     generates = self.inference()
                     MONITOR["infer"] = {
                         "tags": [self.id_to_tag.get(i, f"<{i}>") for i in generates],

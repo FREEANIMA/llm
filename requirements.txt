@@ -1,2 +1,4 @@
 pandas
 pyarrow
+hf_transfer
+huggingface_hub
